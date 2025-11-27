@@ -1,0 +1,9 @@
+pip
+numpy
+pandas
+statsmodels
+xgboost
+scikit-learn
+shap
+matplotlib
+tqdm
