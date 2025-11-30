@@ -44,18 +44,20 @@ Predicted Population_2025 = Population_2015 × (1 + Growth_Rate_predicted / 100)
 
 | Prediction Horizon | Years Ahead | Example |
 |-------------------|-------------|---------|
-| Short-term | 1, 2, 3 years | 2010 → 2011, 2012, 2013 |
-| Medium-term | 5, 10 years | 2010 → 2015, 2020 |
-| Long-term | 15, 20 years | 2010 → 2025, 2030 |
+| Short-term | 5 years | 2010 → 2015 |
+| Medium-term | 10 years | 2010 → 2020 |
+| Long-term | 15 years | 2010 → 2025 |
 
 **Benefits**:
 - Enables model to learn growth patterns across different timescales
 - Dramatically expands dataset (each country contributes multiple samples)
 - Model learns that growth rates depend on time horizon (encoded as "Years ahead" feature)
+- Focused on practical prediction horizons (5, 10, 15 years)
 
 **Final Dataset**:
 - **~4,000+ training samples** from 150+ countries across 50+ years
 - Each sample: (Country features + Year + Horizon → Growth rate)
+- After quality filtering and outlier removal: ~3,200 training samples, ~800 test samples
 
 ## Machine Learning Approach
 
@@ -64,13 +66,27 @@ Predicted Population_2025 = Population_2015 × (1 + Growth_Rate_predicted / 100)
 **Label/Target Variable**: Growth Rate (%) = `((Population_future - Population_current) / Population_current) × 100`  
 **Input Features**: 9 numeric features (Population, Birth rate, Death rate, Life expectancy, GDP per capita, GDP, Density, Year, Years ahead)
 
+### Data Quality & Preprocessing
+**Data Quality Filtering**:
+- Rows with >30% missing values removed from training set
+- Ensures high-quality training data
+- Typical retention rate: ~95-98% of samples
+
+**Outlier Detection & Removal** (Training Set Only):
+- **Isolation Forest** algorithm detects anomalies across all numeric features
+- Contamination threshold: 5% (expects ~5% outliers)
+- Applied **only to training set** to prevent data leakage
+- Test set remains completely unchanged
+- Removes extreme growth rate outliers (e.g., war-torn countries, major migrations)
+
 ### Training Data Statistics
-- **Total Training Samples**: ~4,000+ country-year-horizon pairs
-- **Train Set**: 80% (~3,200 samples)
-- **Test Set**: 20% (~800 samples)
+- **Total Training Samples**: ~4,000+ country-year-horizon pairs (after quality filtering)
+- **Train Set**: 80% (~3,200 samples after outlier removal)
+- **Test Set**: 20% (~800 samples, unchanged)
 - **Random State**: 42 (for reproducibility)
-- **Year Coverage**: Historical data from 1960-2015
+- **Year Coverage**: Historical data from 1960-2016
 - **Geographic Coverage**: 150+ countries across 7 world regions
+- **Prediction Horizons**: 5, 10, and 15 years ahead
 
 ### Preprocessing Pipeline
 All models use identical preprocessing via scikit-learn `Pipeline`:
@@ -86,51 +102,84 @@ Three regression models trained with identical preprocessing:
    - Fastest training time
 
 2. **Random Forest Regressor**
-   - `n_estimators=100`: 100 decision trees
+   - `n_estimators=500`: 500 decision trees (increased for better performance)
+   - `max_depth=10`: Maximum tree depth to prevent overfitting
    - `random_state=42`: Reproducible results
    - `n_jobs=-1`: Parallel processing on all CPU cores
    - Captures non-linear interactions
 
 3. **Gradient Boosting Regressor**
-   - `n_estimators=100`: 100 sequential boosting stages
+   - `n_estimators=500`: 500 sequential boosting stages (increased for better performance)
+   - `max_depth=5`: Shallow trees to prevent overfitting
+   - `learning_rate=0.1`: Step size for gradient descent
    - `random_state=42`: Reproducible results
    - Sequential error correction approach
    - Best performance on test set
 
-### Model Selection Criteria
-**Primary Metric**: Test RMSE (Root Mean Squared Error)
+### Model Selection Strategy
+
+**Two-Stage Selection Process**:
+
+**Stage 1: Cross-Validation** (Model Selection)
+- **5-Fold Cross-Validation** on training set
+- All models evaluated using identical CV folds
+- **Scoring Metric**: RMSE (Root Mean Squared Error)
+- **Best Model Selection**: Model with lowest mean CV RMSE
+- Provides robust performance estimate before test set evaluation
+- Prevents overfitting to validation splits
+
+**Stage 2: Final Evaluation** (Performance Confirmation)
+- Best model (from CV) trained on full training set
+- Final evaluation on held-out test set
+- Confirms generalization performance
+
+**Evaluation Metrics**:
+
+**Primary Metric**: RMSE (Root Mean Squared Error)
 - Formula: `√(Σ(y_pred - y_true)² / n)`
 - Measures average magnitude of prediction errors in percentage points
 - Penalizes large errors more heavily than MAE
+- Used for both CV selection and final evaluation
 
-**Secondary Metric**: Test MAE (Mean Absolute Error)
+**Secondary Metric**: MAE (Mean Absolute Error)
 - Formula: `Σ|y_pred - y_true| / n`
 - Measures average absolute error in percentage points
 - More robust to outliers
+- Provides interpretable average error
 
-**Selection Process**:
-```python
-best_model = min(models, key=lambda m: test_rmse)
-```
-The model with lowest test RMSE is automatically selected as the best model.
+### Error Analysis & Diagnostics
+For each model, comprehensive diagnostics include:
 
-### Error Analysis & Metrics
-For each model, we track:
+**Performance Metrics**:
 - **Train RMSE/MAE**: Performance on training set (overfitting check)
-- **Test RMSE/MAE**: Performance on held-out test set (generalization)
-- **Residual Statistics**: Mean and standard deviation of prediction errors
-- **Residual Plots**: Visual inspection of error patterns
+- **CV RMSE**: 5-fold cross-validation performance (mean ± std dev)
+- **Test RMSE/MAE**: Performance on held-out test set (final generalization)
+
+**Visual Diagnostics** (3x3 Grid):
+- **Row 1**: Metric comparisons (Test RMSE, Test MAE, Train vs Test RMSE)
+- **Row 2**: Prediction accuracy scatter plots for all 3 models
+- **Row 3**: Residual analysis plots with mean/std statistics
+
+**Residual Analysis**:
+- Mean residual close to 0 indicates unbiased predictions
+- Standard deviation of residuals indicates prediction consistency
+- Residual plots reveal systematic errors or patterns
 
 **Typical Performance** (Gradient Boosting - Best Model):
+- CV RMSE: ~2-3% (5-fold average)
 - Test RMSE: ~2-3% (average error of 2-3 percentage points)
 - Test MAE: ~1-2% (average absolute error)
-- No significant overfitting (train/test metrics similar)
+- No significant overfitting (train/test/CV metrics similar)
 
 ### Validation Strategy
 - **Hold-out Validation**: 80/20 train-test split with `random_state=42`
-- **No data leakage**: Preprocessing fitted only on training set, then applied to test set
-- **Temporal considerations**: Predictions span multiple time horizons (1-20 years)
-- **Model comparison**: All models evaluated on identical test set
+- **5-Fold Cross-Validation**: For model selection on training set
+- **No data leakage**: 
+  - Preprocessing fitted only on training set, then applied to test set
+  - Outlier detection fitted only on training set
+  - Test set never seen during model selection
+- **Temporal considerations**: Predictions span multiple time horizons (5, 10, 15 years)
+- **Model comparison**: All models evaluated on identical splits and folds
 
 ## Model Interpretability
 
@@ -157,33 +206,72 @@ We use **SHAP (SHapley Additive exPlanations)** values to understand which featu
 ## Predictions & Applications
 
 ### Generated Predictions
-Using 2015 baseline data, the model predicts:
+Using 2016 baseline data (most recent available), the model predicts:
 
 | Target Year | Horizon | Use Case |
 |------------|---------|----------|
-| **2025** | 10 years | Near-term planning, validation against actual 2025 data |
-| **2030** | 15 years | Medium-term resource allocation |
-| **2035** | 20 years | Long-term strategic planning |
+| **2021** | 5 years | Short-term planning, validation against actual 2021 data |
+| **2026** | 10 years | Medium-term resource allocation |
+| **2031** | 15 years | Long-term strategic planning |
 
 ### Prediction Process
 For each country:
-1. Extract 2015 socioeconomic features
-2. Set prediction horizon (e.g., 10 years for 2025)
+1. Extract 2016 socioeconomic features (latest available data)
+2. Set prediction horizon (5, 10, or 15 years)
 3. Model predicts growth rate percentage
-4. Convert to absolute population: `Pop_2025 = Pop_2015 × (1 + rate/100)`
+4. Convert to absolute population: `Pop_2021 = Pop_2016 × (1 + rate/100)`
 5. Save predictions with metadata (country, region, income group)
 
 ### Output Files
-- `population_predictions_2025.csv`: Country-level 2025 predictions
-- `population_predictions_2030.csv`: Country-level 2030 predictions
-- Visualizations: Regional growth rates, top growing/declining countries
+**Prediction CSVs**:
+- `population_predictions_2021.csv`: Country-level 2021 predictions (+5 years)
+- `population_predictions_2026.csv`: Country-level 2026 predictions (+10 years)
+- `population_predictions_2031.csv`: Country-level 2031 predictions (+15 years)
+
+**Visualizations**:
+- `cross_validation_results.png`: 5-fold CV performance comparison
+- `model_performance.png`: 3x3 grid of diagnostic plots (metrics, scatter plots, residuals)
+- `data_visualization.png`: Training data distributions and statistics
+- `outlier_detection.png`: Before/after outlier removal comparison
+- `shap_importance.png`: Feature importance and directional impacts
+- `population_prediction_multi_horizon.png`: Multi-horizon predictions overview
+
+### Interactive Country Lookup
+The notebook includes an interactive tool to query predictions:
+- Enter any country name (partial matches supported)
+- Automatically displays all three prediction horizons (2021, 2026, 2031)
+- Shows baseline population, predicted populations, growth rates, and changes
+- Formatted as easy-to-read table with 15-year summary
 
 ## Key Features & Methodology Highlights
-✓ **Rigorous train-test split**: 80/20 split prevents data leakage  
-✓ **Proper preprocessing**: KNN imputation + scaling in pipeline (fit on train, transform on test)  
-✓ **Multi-horizon training**: 7 different time horizons for robust predictions  
-✓ **Objective model selection**: Automatic selection based on test RMSE  
+
+### Data Quality & Robustness
+✓ **Data quality filtering**: Removes rows with >30% missing values  
+✓ **Outlier detection**: Isolation Forest removes anomalies from training set only  
+✓ **No data leakage**: Test set completely untouched during preprocessing and model selection  
+✓ **Proper preprocessing**: KNN imputation + scaling in pipeline (fit on train, transform on test)
+
+### Model Selection & Validation
+✓ **5-Fold Cross-Validation**: Scientific model selection before test set evaluation  
+✓ **Rigorous train-test split**: 80/20 split with held-out test set  
+✓ **Multi-horizon training**: 3 time horizons (5, 10, 15 years) for robust predictions  
+✓ **Objective selection**: Best model chosen by lowest CV RMSE  
+✓ **Two-stage validation**: CV selection + final test set confirmation
+
+### Model Performance & Diagnostics
 ✓ **Comprehensive error analysis**: RMSE, MAE, residual plots, overfitting checks  
-✓ **Interpretability**: SHAP values explain which features drive predictions  
-✓ **Professional visualizations**: Growth patterns, regional trends, model comparisons  
-✓ **Reproducible**: Random seeds set (42) for consistent results
+✓ **Visual diagnostics**: 3x3 grid comparing all models (metrics, scatter plots, residuals)  
+✓ **CV performance tracking**: Mean RMSE with standard deviation and 95% confidence intervals  
+✓ **Production-ready models**: Tuned hyperparameters (500 estimators, optimized depth)
+
+### Interpretability & Insights
+✓ **SHAP analysis**: Explains which features drive predictions and their directional impacts  
+✓ **Feature importance**: Identifies key drivers of population growth  
+✓ **Regional analysis**: Growth patterns by world region and income group  
+✓ **Interactive lookup**: Query any country to see all prediction horizons
+
+### Reproducibility & Documentation
+✓ **Reproducible**: All random seeds set (42) for consistent results  
+✓ **Professional visualizations**: Publication-quality plots with detailed annotations  
+✓ **Comprehensive outputs**: 6 visualizations + 3 prediction CSVs saved  
+✓ **Well-documented**: Clear code comments and print statements throughout
